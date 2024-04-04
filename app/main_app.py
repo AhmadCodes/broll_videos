@@ -4,21 +4,16 @@
 # os.environ["IMAGEIO_FFMPEG_EXE"] = "/usr/bin/ffmpeg"
 
 # change_settings({"IMAGEMAGICK_BINARY": "/usr/bin/convert"})
+
+from pexelsapi.pexels import Pexels
 import uuid
 from io import BytesIO
 import boto3
 from dotenv import load_dotenv
 import requests
 import json
-
-try:
-    # from sdxlturbo.predict_sdxlturbo import Predictor as SDXLPredictor
-    from dreamshaper_lcm.predict_DS_LCM import Predictor as SDXLPredictor
-except ImportError:
-
-    # from .sdxlturbo.predict_sdxlturbo import Predictor as SDXLPredictor
-    from .dreamshaper_lcm.predict_DS_LCM import Predictor as SDXLPredictor
-
+from towhee import ops, pipe
+import scipy as sc
 
 import os
 
@@ -38,13 +33,34 @@ def get_s3_client():
     return s3_client
 
 
+# Set your Pexels API key
+PEXELS_API_KEY = os.getenv("PEXELS_API_KEY")
+
+# Create an API object
+pexel_api = Pexels(PEXELS_API_KEY)
+
+# Search for videos with the keyword 'ocean'
+
+
 # %%
 
-sdxlpredictor = SDXLPredictor()
-sdxlpredictor.setup()
+video_embeddings_pipe = (
+    pipe.input('video_path')
+    .map('video_path', 'frames', ops.video_decode.ffmpeg(sample_type='uniform_temporal_subsample', args={'num_samples': 12}))
+    .map('frames', 'vec', ops.video_text_embedding.clip4clip(model_name='clip_vit_b32', modality='video', device='cuda'))
+    # .map('vec', 'vec', ops.normalize)
+    .output('vec')
+)
+
+text_embeddings_pipe = (
+    pipe.input('sentence')
+    .map('sentence', 'vec', ops.video_text_embedding.clip4clip(model_name='clip_vit_b32', modality='text', device='cuda'))
+    .output('vec')
+)
 
 S3_CLIENT = get_s3_client()
 # %%
+
 
 def convert_to_text(word_level_transcript):
     text = " ".join([w['word'] for w in word_level_transcript])
@@ -67,6 +83,63 @@ chatgpt_url = "https://api.openai.com/v1/chat/completions"
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 
 # %%
+
+
+def download_pexels_video(search_phrase,
+                          download_dir = os.path.join(os.path.dirname(__file__), "static")):
+    search_videos = pexel_api.search_videos(query=search_phrase, orientation='', size='', color='', locale='', page=1, per_page=5)
+    print(search_videos)
+
+    if not os.path.exists(download_dir):
+        os.makedirs(download_dir)
+    
+    downloaded_files = []
+    for video in search_videos["videos"]:
+        video_id = video["id"]
+        download_url = f'https://www.pexels.com/video/{video_id}/download'
+        response = requests.get(download_url)
+        
+        if response.status_code == 200:
+            file_name = os.path.join(download_dir, f'{video_id}.mp4')
+            with open(file_name, 'wb') as file:
+                file.write(response.content)
+            downloaded_files.append(file_name)
+            print(f'Downloaded video: {file_name}')
+        else:
+            print(f'Failed to download video: {video_id}')
+            
+    return downloaded_files
+
+
+def get_video_embeddings(video_path):
+    return video_embeddings_pipe(video_path).get()
+
+
+def get_text_embeddings(sentence):
+    return text_embeddings_pipe(sentence).get()
+
+
+def rank_videos(video_paths,
+                sentence,
+                top_K=5):
+    sentence_embedding = get_text_embeddings(sentence)
+
+    video_embeddings = []
+    for video_path in video_paths:
+        video_embeddings.append(get_video_embeddings(video_path))
+
+    video_embeddings = sc.array(video_embeddings)
+    sentence_embedding = sc.array([sentence_embedding])
+
+    # Compute the similarity between the sentence and each video using L2 distance
+    similarity = sc.linalg.norm(video_embeddings - sentence_embedding, axis=1)
+
+    # Rank the video paths based on the similarity
+    ranked_video_paths = [video_paths[i] for i in similarity.argsort()]
+
+    return ranked_video_paths[:top_K]
+
+
 # %%
 
 
@@ -76,11 +149,11 @@ def validate_KV_pair(dict_list,
         check_all_keys = all([k in d.keys() for k in ['description']])
 
         check_description = isinstance(d['description'], str)
-        
+
         if debug:
             print("check_all_keys: ", check_all_keys)
             print("check_description: ", check_description)
-        
+
         return check_all_keys and check_description
 
 
@@ -246,30 +319,6 @@ def fetch_broll_description(wordlevel_info,
 # %%
 
 
-def generate_images(descriptions,
-                    steps=3):
-    all_images = []
-
-    num_images = len(descriptions)
-
-    negative_prompt = "nsfw, nude, nudity, sexy, naked, ((deformed)), ((limbs cut off)), ((quotes)), ((unrealistic)), ((extra fingers)), ((deformed hands)), extra limbs, disfigured, blurry, bad anatomy, absent limbs, blurred, watermark, disproportionate, grainy, signature, cut off, missing legs, missing arms, poorly drawn face, bad face, fused face, cloned face, worst face, three crus, extra crus, fused crus, worst feet, three feet, fused feet, fused thigh, three thigh, fused thigh, extra thigh, worst thigh, missing fingers, extra fingers, ugly fingers, long fingers, horn, extra eyes, amputation, disconnected limbs, glitch, low contrast, noisy"
-
-    for i, description in enumerate(descriptions):
-        prompt = description['description']
-
-        final_prompt = "((perfect quality)), ((ultrarealistic)), ((realism)) 4k, {}, no occlusion, highly detailed,".format(
-            prompt.replace('.', ","))
-        img = sdxlpredictor.predict(prompt=final_prompt,
-                                    negative_prompt=negative_prompt,
-                                    num_inference_steps=steps)
-
-        print(f"Image {i + 1}/{num_images} is generated")
-        # img will be a PIL image
-        all_images.append(img)
-
-    return all_images
-
-
 # %%
 
 
@@ -310,15 +359,14 @@ def pipeline(word_level_transcript,
                                                           context_buffer_s,
                                                           chatgpt_url,
                                                           openaiapi_key,
-                                                          debug = debug)
+                                                          debug=debug)
     if debug:
         print("B-roll descriptions: ", broll_descriptions)
     if err_msg != "" and broll_descriptions is None:
         return err_msg
 
     # Generate B-roll images
-    allimages = generate_images(broll_descriptions,
-                                steps=broll_image_steps)
+
     img_upload_info = []
     for i, img in enumerate(allimages):
         img_info = upload_image_to_s3(img, "brollimages", S3_CLIENT)
