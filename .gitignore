@@ -168,3 +168,5 @@ runpod.toml
 weights/*
 \n*.jpg
 \n.vscode/
+
+weights/*
