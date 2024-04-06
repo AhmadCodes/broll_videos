@@ -3,6 +3,14 @@ FROM runpod/base:0.4.2-cuda11.8.0
 
 ENV HF_HUB_ENABLE_HF_TRANSFER=0
 
+# Update and upgrade the system packages (Worker Template)
+RUN apt-get update && \
+    apt-get upgrade -y
+
+# Install System Packages
+RUN apt-get install ffmpeg -y
+
+
 # Install Python dependencies (Worker Template)
 COPY builder/requirements.txt /requirements.txt
 RUN python3.11 -m pip install --upgrade pip && \
