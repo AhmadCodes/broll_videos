@@ -416,7 +416,8 @@ def pipeline(word_level_transcript,
         return json.loads(json.dumps(ranked_videos))
     except Exception as e:
         err_msg = "Error in pipeline: " + str(e) + "\n" + tb.format_exc()
-
+        print(err_msg)
+        return err_msg
 
 # %%
 if __name__ == "__main__":
