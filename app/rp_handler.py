@@ -47,7 +47,8 @@ def generate_image(job):
                        context_end_s=context_end_s,
                           context_buffer_s=context_buffer_s,
                           n_seach_phrases=n_search_phrases,
-                          n_searches_per_phrase=n_searche_results_per_phrase,top_K=top_K)
+                          n_searches_per_phrase=n_searche_results_per_phrase,top_K=top_K,
+                          debug=True)
 
     return results
 #%%
