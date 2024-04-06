@@ -109,7 +109,17 @@ def download_pexels_video(search_phrases,
 
         for i, video in enumerate(search_videos):
             video_id = video["id"]
-            download_url = f'https://www.pexels.com/video/{video_id}/download'
+            v = video["video_files"]
+            sd = [v_ for v_ in v if v_["quality"] == "sd"]
+            if len(sd) == 0:
+                hd = [v_ for v_ in v if v_["quality"] == "hd"]
+                if len(hd) == 0:
+                    continue
+                else:
+                    video_url = hd[0]["link"]
+            else:
+                video_url = sd[0]["link"]
+            download_url = video_url
             response = requests.get(download_url)
 
             if response.status_code == 200:
@@ -152,9 +162,9 @@ def rank_videos(video_dict,
     for video_path in video_paths:
         video_embeddings.append(get_video_embeddings(video_path))
 
-    video_embeddings = sc.array(video_embeddings)
+    video_embeddings = np.array(video_embeddings)
     video_embeddings = np.squeeze(video_embeddings)
-    sentence_embedding = sc.array([sentence_embedding])
+    sentence_embedding = np.array([sentence_embedding])
     sentence_embedding = np.squeeze(sentence_embedding)
 
     # Compute the similarity between the sentence and each video using L2 distance
@@ -168,6 +178,7 @@ def rank_videos(video_dict,
         k = [k for k, v in video_dict.items() if v["local_path"] == r][0]
         video_dict[k]["Rank"] = i+1
         video_dict[k]["Distance"] = s
+        video_dict[k]["B-roll description"] = sentence
         ranked_videos.append(video_dict[k])
 
     return ranked_videos[:top_K]
@@ -179,12 +190,12 @@ def validate_KV_pair(dict_list,
                      debug=False):
     for d in dict_list:
         check_all_keys = all([k in d.keys()
-                             for k in ['description', "search phrase"]])
+                             for k in ['description', "search_phrases"]])
 
         check_description = isinstance(d['description'], str)
-        check_keywords = isinstance(d['search phrases'], list)
+        check_keywords = isinstance(d['search_phrases'], list)
         check_each_keyword = all([isinstance(k, str)
-                                 for k in d['search phrases']])
+                                 for k in d['search_phrases']])
 
         if debug:
             print("check_all_keys: ", check_all_keys)
@@ -286,14 +297,14 @@ def fetch_broll_description(wordlevel_info,
     The description should represent the context of the whole video and should represent the Text of Interest.
     The description should be one sentence long and should be simple and easy to understand.
     The description should represent the caption of the B-roll video and should be simple.
-    All of search phrases should be very relevant to the description and should be very relevant to the Text of Interest.
-    The search phrases should be 1-4 words long each.
-    The number of search phrases should be {}.
+    All of search_phrases should be very relevant to the description and should be very relevant to the Text of Interest.
+    The search_phrases should be 1-4 words long each.
+    The number of search_phrases should be {}.
     Strictly output only JSON in the output using the format (BE CAREFUL NOT TO MISS ANY COMMAS, QUOTES OR SEMICOLONS ETC)-""".format(transcript,
                                                                                                                                       context,
                                                                                                                                       n_searches)
 
-    sample = {"description": "...", "search phrases": ["...", "...", "..."]}
+    sample = {"description": "...", "search_phrases": ["...", "...", "..."]}
 
     prompt = prompt_prefix + json.dumps(sample) + f"""\n
     Be sure to only make 1 json. \nJSON:"""
@@ -415,7 +426,7 @@ def pipeline(word_level_transcript,
 
         # Download videos from Pexels
 
-        video_dict, err_msg = download_pexels_video(broll_descriptions[0]['search phrases'],
+        video_dict, err_msg = download_pexels_video(broll_descriptions[0]['search_phrases'],
                                                     n_searches_per_phrase=n_searches_per_phrase,
                                                     debug=debug)
         if debug:
@@ -430,8 +441,8 @@ def pipeline(word_level_transcript,
                                     broll_descriptions[0]['description'],
                                     top_K=top_K)
 
-        ranked_videos.append({"B-roll description": broll_descriptions[0]['description'],
-                              "Search Phrases": broll_descriptions[0]['search phrases']})
+        # ranked_videos.append({"B-roll description": broll_descriptions[0]['description'],
+        #                       "Search Phrases": broll_descriptions[0]['search_phrases']})
 
         return json.loads(json.dumps(ranked_videos, 
                                      cls= NumpyEncoder) 
@@ -448,7 +459,8 @@ if __name__ == "__main__":
     context_start_s = 12
     context_end_s = 30
     context_buffer_s = 5
-
+    import time
+    t0 = time.time()
     img_info = pipeline(example_transcript,
                         context_start_s=context_start_s,
                         context_end_s=context_end_s,
@@ -458,4 +470,6 @@ if __name__ == "__main__":
                         top_K=2,
                         openaiapi_key=OPENAI_API_KEY,
                         debug=True)
+    t1 = time.time()
+    print("Time taken: ", t1-t0)
 # %%
