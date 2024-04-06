@@ -5,6 +5,7 @@
 
 # change_settings({"IMAGEMAGICK_BINARY": "/usr/bin/convert"})
 
+import traceback as tb
 from pexelsapi.pexels import Pexels
 import uuid
 from io import BytesIO
@@ -86,44 +87,46 @@ OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 
 
 def download_pexels_video(search_phrases,
-                          download_dir = os.path.join(os.path.dirname(__file__), "static"),
+                          download_dir=os.path.join(
+                              os.path.dirname(__file__), "static"),
                           n_searches_per_phrase=3,
                           debug=False):
-    search_videos = []  
+    search_videos = []
     err_msg = ""
     downloaded_files = None
     try:
         for search_phrase in search_phrases:
-            search_results = pexel_api.search_videos(query=search_phrase, orientation='', size='', color='', locale='', page=1, per_page=n_searches_per_phrase)
+            search_results = pexel_api.search_videos(
+                query=search_phrase, orientation='', size='', color='', locale='', page=1, per_page=n_searches_per_phrase)
             search_videos.extend(search_results['videos'])
         if debug:
             print(search_videos)
 
         if not os.path.exists(download_dir):
             os.makedirs(download_dir)
-        
+
         downloaded_files = {}
-        
+
         for i, video in enumerate(search_videos):
             video_id = video["id"]
             download_url = f'https://www.pexels.com/video/{video_id}/download'
             response = requests.get(download_url)
-            
+
             if response.status_code == 200:
                 file_name = os.path.join(download_dir, f'{i}.mp4')
                 with open(file_name, 'wb') as file:
                     file.write(response.content)
-                downloaded_files[video_id] = {"local_path": file_name, 
-                                            "video_information": video,
-                                            }
-                if debug :
+                downloaded_files[video_id] = {"local_path": file_name,
+                                              "video_information": video,
+                                              }
+                if debug:
                     print(f'Downloaded video: {file_name}')
             else:
                 print(f'Failed to download video: {video_id}')
     except Exception as e:
         err_msg = "Error in downloading videos from Pexels: " + str(e)
         return downloaded_files, err_msg
-                
+
     return downloaded_files, err_msg
 
 
@@ -140,10 +143,11 @@ def rank_videos(video_dict,
                 top_K=5):
     sentence_embedding = get_text_embeddings(sentence)
     video_ids = list(video_dict.keys())
-    video_paths = [video_dict[video_id]["local_path"] for video_id in video_ids]
-    
+    video_paths = [video_dict[video_id]["local_path"]
+                   for video_id in video_ids]
+
     ranked_videos = []
-    
+
     video_embeddings = []
     for video_path in video_paths:
         video_embeddings.append(get_video_embeddings(video_path))
@@ -152,33 +156,35 @@ def rank_videos(video_dict,
     video_embeddings = np.squeeze(video_embeddings)
     sentence_embedding = sc.array([sentence_embedding])
     sentence_embedding = np.squeeze(sentence_embedding)
-    
+
     # Compute the similarity between the sentence and each video using L2 distance
     similarity = sc.linalg.norm(video_embeddings - sentence_embedding, axis=1)
 
-    ranked_video_paths = [[video_paths[i], similarity[i]] for i in similarity.argsort()]
+    ranked_video_paths = [[video_paths[i], similarity[i]]
+                          for i in similarity.argsort()]
 
-    for i, [r,s] in enumerate(ranked_video_paths):
-        
+    for i, [r, s] in enumerate(ranked_video_paths):
+
         k = [k for k, v in video_dict.items() if v["local_path"] == r][0]
         video_dict[k]["Rank"] = i+1
         video_dict[k]["Distance"] = s
         ranked_videos.append(video_dict[k])
-            
+
     return ranked_videos[:top_K]
 
 
-
-#%%
+# %%
 
 def validate_KV_pair(dict_list,
                      debug=False):
     for d in dict_list:
-        check_all_keys = all([k in d.keys() for k in ['description', "search phrase"]])
+        check_all_keys = all([k in d.keys()
+                             for k in ['description', "search phrase"]])
 
         check_description = isinstance(d['description'], str)
         check_keywords = isinstance(d['search phrases'], list)
-        check_each_keyword = all([isinstance(k, str) for k in d['search phrases']])
+        check_each_keyword = all([isinstance(k, str)
+                                 for k in d['search phrases']])
 
         if debug:
             print("check_all_keys: ", check_all_keys)
@@ -369,53 +375,50 @@ def pipeline(word_level_transcript,
              openaiapi_key=os.getenv("OPENAI_API_KEY"),
              debug=False
              ):
+    try:
+        if top_K > n_searches_per_phrase*n_seach_phrases:
+            top_K = n_searches_per_phrase*n_seach_phrases
+            print("Top_K is greater than the total number of videos that can be downloaded. Setting top_K to the maximum number of videos that can be downloaded.")
+        # Fetch B-roll descriptions
+        broll_descriptions, err_msg = fetch_broll_description(word_level_transcript,
+                                                              context_start_s,
+                                                              context_end_s,
+                                                              context_buffer_s,
+                                                              chatgpt_url,
+                                                              openaiapi_key,
+                                                              n_searches=n_seach_phrases,
+                                                              debug=debug)
+        if debug:
+            print("B-roll descriptions: ", broll_descriptions)
+        if err_msg != "" and broll_descriptions is None:
+            return err_msg
 
-    
-    if top_K > n_searches_per_phrase*n_seach_phrases:
-        top_K = n_searches_per_phrase*n_seach_phrases
-        print("Top_K is greater than the total number of videos that can be downloaded. Setting top_K to the maximum number of videos that can be downloaded.")    
-    # Fetch B-roll descriptions
-    broll_descriptions, err_msg = fetch_broll_description(word_level_transcript,
-                                                          context_start_s,
-                                                          context_end_s,
-                                                          context_buffer_s,
-                                                          chatgpt_url,
-                                                          openaiapi_key,
-                                                          n_searches=n_seach_phrases,
-                                                          debug=debug)
-    if debug:
-        print("B-roll descriptions: ", broll_descriptions)
-    if err_msg != "" and broll_descriptions is None:
-        return err_msg
-    
-    # Download videos from Pexels
-       
-    video_dict, err_msg = download_pexels_video(broll_descriptions[0]['search phrases'],
-                                                n_searches_per_phrase=n_searches_per_phrase,
-                                                debug=debug)
-    if debug:
-        print("Video dict: ", video_dict)
-        if err_msg != "":
-            print("Error message: ", err_msg)
-    if err_msg != "" and video_dict is None:
-        return err_msg
-    
-    
-    # Rank videos based on the description
-    ranked_videos = rank_videos(video_dict,
-                                broll_descriptions[0]['description'],
-                                top_K=top_K)
-    
-    ranked_videos.append({"B-roll description": broll_descriptions[0]['description'],
-                          "Search Phrases": broll_descriptions[0]['search phrases']})
-    
-    return ranked_videos
-    
+        # Download videos from Pexels
 
+        video_dict, err_msg = download_pexels_video(broll_descriptions[0]['search phrases'],
+                                                    n_searches_per_phrase=n_searches_per_phrase,
+                                                    debug=debug)
+        if debug:
+            print("Video dict: ", video_dict)
+            if err_msg != "":
+                print("Error message: ", err_msg)
+        if err_msg != "" and video_dict is None:
+            return err_msg
+
+        # Rank videos based on the description
+        ranked_videos = rank_videos(video_dict,
+                                    broll_descriptions[0]['description'],
+                                    top_K=top_K)
+
+        ranked_videos.append({"B-roll description": broll_descriptions[0]['description'],
+                              "Search Phrases": broll_descriptions[0]['search phrases']})
+
+        return json.loads(json.dumps(ranked_videos))
+    except Exception as e:
+        err_msg = "Error in pipeline: " + str(e) + "\n" + tb.format_exc()
 
 
-#%%
-
+# %%
 if __name__ == "__main__":
     from example import example_transcript
 
@@ -427,9 +430,9 @@ if __name__ == "__main__":
                         context_start_s=context_start_s,
                         context_end_s=context_end_s,
                         context_buffer_s=context_buffer_s,
-                        n_seach_phrases=3,
-                        n_searches_per_phrase=5,
-                        top_K=5,
+                        n_seach_phrases=1,
+                        n_searches_per_phrase=2,
+                        top_K=2,
                         openaiapi_key=OPENAI_API_KEY,
                         debug=True)
 # %%
