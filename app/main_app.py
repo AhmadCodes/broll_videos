@@ -371,8 +371,9 @@ def pipeline(word_level_transcript,
              ):
 
     
-    
-    
+    if top_K > n_searches_per_phrase*n_seach_phrases:
+        top_K = n_searches_per_phrase*n_seach_phrases
+        print("Top_K is greater than the total number of videos that can be downloaded. Setting top_K to the maximum number of videos that can be downloaded.")    
     # Fetch B-roll descriptions
     broll_descriptions, err_msg = fetch_broll_description(word_level_transcript,
                                                           context_start_s,

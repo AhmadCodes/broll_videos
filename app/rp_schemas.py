@@ -19,10 +19,19 @@ INPUT_SCHEMA = {
         'required': False,
     },
     
-    'generation_steps': {
+    #n_seach_phrases=3,
+    # n_searches_per_phrase=5,
+    # top_K=5,
+    'n_search_phrases' : {
         'type': int,
         'required': False,
-        "min": 10,
-        "max": 50
     },
+    'n_searche_results_per_phrase' : {
+        'type': int,
+        'required': False,
+    },
+    'top_K' : {
+        'type': int,
+        'required': False,
+    }
 }
