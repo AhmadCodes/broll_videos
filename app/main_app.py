@@ -14,7 +14,7 @@ import requests
 import json
 from towhee import ops, pipe
 import scipy as sc
-
+import numpy as np
 import os
 
 from dotenv import load_dotenv
@@ -85,30 +85,46 @@ OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 # %%
 
 
-def download_pexels_video(search_phrase,
-                          download_dir = os.path.join(os.path.dirname(__file__), "static")):
-    search_videos = pexel_api.search_videos(query=search_phrase, orientation='', size='', color='', locale='', page=1, per_page=5)
-    print(search_videos)
+def download_pexels_video(search_phrases,
+                          download_dir = os.path.join(os.path.dirname(__file__), "static"),
+                          n_searches_per_phrase=3,
+                          debug=False):
+    search_videos = []  
+    err_msg = ""
+    downloaded_files = None
+    try:
+        for search_phrase in search_phrases:
+            search_results = pexel_api.search_videos(query=search_phrase, orientation='', size='', color='', locale='', page=1, per_page=n_searches_per_phrase)
+            search_videos.extend(search_results['videos'])
+        if debug:
+            print(search_videos)
 
-    if not os.path.exists(download_dir):
-        os.makedirs(download_dir)
-    
-    downloaded_files = []
-    for video in search_videos["videos"]:
-        video_id = video["id"]
-        download_url = f'https://www.pexels.com/video/{video_id}/download'
-        response = requests.get(download_url)
+        if not os.path.exists(download_dir):
+            os.makedirs(download_dir)
         
-        if response.status_code == 200:
-            file_name = os.path.join(download_dir, f'{video_id}.mp4')
-            with open(file_name, 'wb') as file:
-                file.write(response.content)
-            downloaded_files.append(file_name)
-            print(f'Downloaded video: {file_name}')
-        else:
-            print(f'Failed to download video: {video_id}')
+        downloaded_files = {}
+        
+        for i, video in enumerate(search_videos):
+            video_id = video["id"]
+            download_url = f'https://www.pexels.com/video/{video_id}/download'
+            response = requests.get(download_url)
             
-    return downloaded_files
+            if response.status_code == 200:
+                file_name = os.path.join(download_dir, f'{i}.mp4')
+                with open(file_name, 'wb') as file:
+                    file.write(response.content)
+                downloaded_files[video_id] = {"local_path": file_name, 
+                                            "video_information": video,
+                                            }
+                if debug :
+                    print(f'Downloaded video: {file_name}')
+            else:
+                print(f'Failed to download video: {video_id}')
+    except Exception as e:
+        err_msg = "Error in downloading videos from Pexels: " + str(e)
+        return downloaded_files, err_msg
+                
+    return downloaded_files, err_msg
 
 
 def get_video_embeddings(video_path):
@@ -119,42 +135,58 @@ def get_text_embeddings(sentence):
     return text_embeddings_pipe(sentence).get()
 
 
-def rank_videos(video_paths,
+def rank_videos(video_dict,
                 sentence,
                 top_K=5):
     sentence_embedding = get_text_embeddings(sentence)
-
+    video_ids = list(video_dict.keys())
+    video_paths = [video_dict[video_id]["local_path"] for video_id in video_ids]
+    
+    ranked_videos = []
+    
     video_embeddings = []
     for video_path in video_paths:
         video_embeddings.append(get_video_embeddings(video_path))
 
     video_embeddings = sc.array(video_embeddings)
+    video_embeddings = np.squeeze(video_embeddings)
     sentence_embedding = sc.array([sentence_embedding])
-
+    sentence_embedding = np.squeeze(sentence_embedding)
+    
     # Compute the similarity between the sentence and each video using L2 distance
     similarity = sc.linalg.norm(video_embeddings - sentence_embedding, axis=1)
 
-    # Rank the video paths based on the similarity
-    ranked_video_paths = [video_paths[i] for i in similarity.argsort()]
+    ranked_video_paths = [[video_paths[i], similarity[i]] for i in similarity.argsort()]
 
-    return ranked_video_paths[:top_K]
+    for i, [r,s] in enumerate(ranked_video_paths):
+        
+        k = [k for k, v in video_dict.items() if v["local_path"] == r][0]
+        video_dict[k]["Rank"] = i+1
+        video_dict[k]["Distance"] = s
+        ranked_videos.append(video_dict[k])
+            
+    return ranked_videos[:top_K]
 
 
-# %%
 
+#%%
 
 def validate_KV_pair(dict_list,
                      debug=False):
     for d in dict_list:
-        check_all_keys = all([k in d.keys() for k in ['description']])
+        check_all_keys = all([k in d.keys() for k in ['description', "search phrase"]])
 
         check_description = isinstance(d['description'], str)
+        check_keywords = isinstance(d['search phrases'], list)
+        check_each_keyword = all([isinstance(k, str) for k in d['search phrases']])
 
         if debug:
             print("check_all_keys: ", check_all_keys)
             print("check_description: ", check_description)
+            print("check_keywords: ", check_keywords)
+            print("check_each_keyword: ", check_each_keyword)
 
-        return check_all_keys and check_description
+        return check_all_keys and check_description and check_keywords, check_each_keyword
 
 
 def json_corrector(json_str,
@@ -217,6 +249,7 @@ def fetch_broll_description(wordlevel_info,
                             context_buffer_s,
                             url,
                             openaiapi_key,
+                            n_searches=3,
                             debug=False):
 
     success = False
@@ -238,17 +271,23 @@ def fetch_broll_description(wordlevel_info,
     prompt_prefix = """Complete Transcript:
     {}
     ----
-    Time Stamped Context:
+    Text of Interest:
     {}
     ----
     
-    Given the Transcript of a video, generate very relevant stock image description to insert as B-roll image.
-    The description of B-roll images should perfectly match with the context window that is provided.
-    Strictly don't include any exact word or text labels to be depicted in the image.
+    Given the Complete Transcript of a video, generate very relevant stock video description and search phraase to insert as B-roll video.
+    The description of B-roll video should be very relevant to the Text of Interest that is provided.
+    The description should represent the context of the whole video and should represent the Text of Interest.
+    The description should be one sentence long and should be simple and easy to understand.
+    The description should represent the caption of the B-roll video and should be simple.
+    All of search phrases should be very relevant to the description and should be very relevant to the Text of Interest.
+    The search phrases should be 1-4 words long each.
+    The number of search phrases should be {}.
     Strictly output only JSON in the output using the format (BE CAREFUL NOT TO MISS ANY COMMAS, QUOTES OR SEMICOLONS ETC)-""".format(transcript,
-                                                                                                                                      context)
+                                                                                                                                      context,
+                                                                                                                                      n_searches)
 
-    sample = {"description": "..."}
+    sample = {"description": "...", "search phrases": ["...", "...", "..."]}
 
     prompt = prompt_prefix + json.dumps(sample) + f"""\n
     Be sure to only make 1 json. \nJSON:"""
@@ -316,42 +355,24 @@ def fetch_broll_description(wordlevel_info,
 
     return output, err_msg
 
-# %%
-
-
-# %%
-
-
-def upload_image_to_s3(image, bucket, s3_client):
-    # Convert PIL Image to Bytes
-    buffer = BytesIO()
-    image.save(buffer, format="PNG")
-    image_byte_array = buffer.getvalue()
-    # uuid for uploaded_image as the image name
-    upload_key = uuid.uuid4().hex + ".png"
-    # Upload Bytes to S3
-    s3_client.put_object(Body=image_byte_array, Bucket=bucket, Key=upload_key)
-
-    # Generate the URL of the uploaded image
-    s3_img_info = {
-        "bucket": bucket,
-        "key": upload_key
-    }
-
-    return s3_img_info
 
 # %%
 
 
 def pipeline(word_level_transcript,
-             context_start_s=0,
-             context_end_s=0,
-             context_buffer_s=5,
-             broll_image_steps=50,
+             context_start_s,
+             context_end_s,
+             context_buffer_s,
+             n_seach_phrases,
+             n_searches_per_phrase,
+             top_K,
              openaiapi_key=os.getenv("OPENAI_API_KEY"),
              debug=False
              ):
 
+    
+    
+    
     # Fetch B-roll descriptions
     broll_descriptions, err_msg = fetch_broll_description(word_level_transcript,
                                                           context_start_s,
@@ -359,23 +380,40 @@ def pipeline(word_level_transcript,
                                                           context_buffer_s,
                                                           chatgpt_url,
                                                           openaiapi_key,
+                                                          n_searches=n_seach_phrases,
                                                           debug=debug)
     if debug:
         print("B-roll descriptions: ", broll_descriptions)
     if err_msg != "" and broll_descriptions is None:
         return err_msg
+    
+    # Download videos from Pexels
+       
+    video_dict, err_msg = download_pexels_video(broll_descriptions[0]['search phrases'],
+                                                n_searches_per_phrase=n_searches_per_phrase,
+                                                debug=debug)
+    if debug:
+        print("Video dict: ", video_dict)
+        if err_msg != "":
+            print("Error message: ", err_msg)
+    if err_msg != "" and video_dict is None:
+        return err_msg
+    
+    
+    # Rank videos based on the description
+    ranked_videos = rank_videos(video_dict,
+                                broll_descriptions[0]['description'],
+                                top_K=top_K)
+    
+    ranked_videos.append({"B-roll description": broll_descriptions[0]['description'],
+                          "Search Phrases": broll_descriptions[0]['search phrases']})
+    
+    return ranked_videos
+    
 
-    # Generate B-roll images
 
-    img_upload_info = []
-    for i, img in enumerate(allimages):
-        img_info = upload_image_to_s3(img, "brollimages", S3_CLIENT)
-        img_info['description'] = broll_descriptions[i]['description']
-        img_upload_info.append(img_info)
 
-    return img_upload_info
-# %%
-
+#%%
 
 if __name__ == "__main__":
     from example import example_transcript
@@ -388,7 +426,9 @@ if __name__ == "__main__":
                         context_start_s=context_start_s,
                         context_end_s=context_end_s,
                         context_buffer_s=context_buffer_s,
-                        broll_image_steps=50,
+                        n_seach_phrases=3,
+                        n_searches_per_phrase=5,
+                        top_K=5,
                         openaiapi_key=OPENAI_API_KEY,
                         debug=True)
 # %%
