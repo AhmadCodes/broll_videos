@@ -365,6 +365,26 @@ def fetch_broll_description(wordlevel_info,
 # %%
 
 
+class NumpyEncoder(json.JSONEncoder):
+    """ Special json encoder for numpy types """
+    def default(self, obj):
+        if isinstance(obj, np.integer):
+            return int(obj)
+        elif isinstance(obj, np.floating):
+            return float(obj)
+        elif isinstance(obj, np.ndarray):
+            return obj.tolist()
+        elif isinstance(obj, sc.ndarray):
+            return obj.tolist()
+        elif isinstance(obj, sc.float32):
+            return float(obj)
+        elif isinstance(obj, sc.float64):
+            return float(obj)
+        elif isinstance(obj, sc.int32):
+            return int(obj)
+        return json.JSONEncoder.default(self, obj)
+
+
 def pipeline(word_level_transcript,
              context_start_s,
              context_end_s,
@@ -413,7 +433,9 @@ def pipeline(word_level_transcript,
         ranked_videos.append({"B-roll description": broll_descriptions[0]['description'],
                               "Search Phrases": broll_descriptions[0]['search phrases']})
 
-        return json.loads(json.dumps(ranked_videos))
+        return json.loads(json.dumps(ranked_videos, 
+                                     cls= NumpyEncoder) 
+                          )
     except Exception as e:
         err_msg = "Error in pipeline: " + str(e) + "\n" + tb.format_exc()
         print(err_msg)
