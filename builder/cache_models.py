@@ -13,14 +13,14 @@ def fetch_pretrained_model():
     video_embeddings_pipe = (
         pipe.input('video_path')
         .map('video_path', 'frames', ops.video_decode.ffmpeg(sample_type='uniform_temporal_subsample', args={'num_samples': 12}))
-        .map('frames', 'vec', ops.video_text_embedding.clip4clip(model_name='clip_vit_b32', modality='video', device='cuda'))
+        .map('frames', 'vec', ops.video_text_embedding.clip4clip(model_name='clip_vit_b32', modality='video', device='cpu'))
         # .map('vec', 'vec', ops.normalize)
         .output('vec')
     )
 
     text_embeddings_pipe = (
         pipe.input('sentence')
-        .map('sentence', 'vec', ops.video_text_embedding.clip4clip(model_name='clip_vit_b32', modality='text', device='cuda'))
+        .map('sentence', 'vec', ops.video_text_embedding.clip4clip(model_name='clip_vit_b32', modality='text', device='cpu'))
         .output('vec')
     )
 
