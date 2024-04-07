@@ -35,10 +35,7 @@ def get_s3_client():
 
 
 # Set your Pexels API key
-PEXELS_API_KEY = os.getenv("PEXELS_API_KEY")
 
-# Create an API object
-pexel_api = Pexels(PEXELS_API_KEY)
 
 # Search for videos with the keyword 'ocean'
 
@@ -87,6 +84,7 @@ OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 
 
 def download_pexels_video(search_phrases,
+                          pexels_api_key,
                           download_dir=os.path.join(
                               os.path.dirname(__file__), "static"),
                           n_searches_per_phrase=3,
@@ -95,6 +93,7 @@ def download_pexels_video(search_phrases,
     err_msg = ""
     downloaded_files = None
     try:
+        pexel_api = Pexels(pexels_api_key)
         for search_phrase in search_phrases:
             search_results = pexel_api.search_videos(
                 query=search_phrase, orientation='', size='', color='', locale='', page=1, per_page=n_searches_per_phrase)
@@ -403,6 +402,7 @@ def pipeline(word_level_transcript,
              n_seach_phrases,
              n_searches_per_phrase,
              top_K,
+             pexels_api_key,
              openaiapi_key=os.getenv("OPENAI_API_KEY"),
              debug=False
              ):
@@ -427,6 +427,7 @@ def pipeline(word_level_transcript,
         # Download videos from Pexels
 
         video_dict, err_msg = download_pexels_video(broll_descriptions[0]['search_phrases'],
+                                                    pexels_api_key,
                                                     n_searches_per_phrase=n_searches_per_phrase,
                                                     debug=debug)
         if debug:
@@ -468,6 +469,7 @@ if __name__ == "__main__":
                         n_seach_phrases=1,
                         n_searches_per_phrase=2,
                         top_K=2,
+                        pexels_api_key = "gszGv4rBnHq1X62jwOc73uOhS0resHHzdHNPGlbU9DkjYSQtniki3bbp",
                         openaiapi_key=OPENAI_API_KEY,
                         debug=True)
     t1 = time.time()

@@ -49,6 +49,7 @@ def generate_image(job):
                           n_seach_phrases=n_search_phrases,
                           n_searches_per_phrase=n_searche_results_per_phrase,top_K=top_K,
                           debug=True)
+    
 
     return results
 #%%
@@ -61,8 +62,8 @@ job = {
         "context_buffer_s": 0,
         "n_search_phrases": 3,
         "n_searche_results_per_phrase": 5,
-        "top_K": 5
-        
+        "top_K": 5,
+        "pexels_api_key": "gszGv4rBnHq1X62jwOc73uOhS0resHHzdHNPGlbU9DkjYSQtniki3bbp"
     }
 }
 # generate_image(job)
